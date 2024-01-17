@@ -2,17 +2,72 @@ import torch
 import numpy as np
 import polars as pl
 import pandas as pd
-import umap
-
-import scipy.stats
-
 from sklearn.decomposition import PCA
-from torch.utils.data import Dataset, DataLoader, BatchSampler, RandomSampler, random_split
-import plotnine as p9
-import anndata
-from scipy.sparse import coo_array
+from torch.utils.data import Dataset
 
 
+
+# this class is for data loading of the normal variational autoencoder
+class DepMap_Data(Dataset): 
+    def __init__(self,
+                 path):
+        self.ds_path = path
+        dep_map_data = pl.read_csv(path, separator = "\t")
+
+        data = dep_map_data.melt(id_vars=['gene_id'],
+                        variable_name='cell_line',
+                        value_name='CERES_score',
+                        )
+        mean = data.select(pl.mean("CERES_score"))[0,0]
+        sd = data.select(pl.std("CERES_score"))[0,0]
+
+        dep_map_data = dep_map_data.with_columns((pl.col(dep_map_data.columns[1:]) - mean)/sd)
+
+        # shuffle and split in train / test 
+        dep_map_data = dep_map_data.sample(fraction = 1, shuffle = True)
+        
+        self.dataset = dep_map_data
+        self.train_table = dep_map_data[:int(len(dep_map_data) * 0.9)]
+        self.test_table = dep_map_data[int(len(dep_map_data) * 0.9):]
+
+    def genes_in_assay(self):
+        return self.dataset["gene_id"].to_list()
+    
+    def num_celllines_in_assay(self):
+        return len(self.dataset.columns)-1
+    
+    def get_num_batches_per_epoch(self, batchsize, subset='train'):
+        if subset == 'train':
+            return int(np.ceil(len(self.train_table) / batchsize))
+        elif subset == 'test':
+            return int(np.ceil(len(self.test_table) / batchsize))
+        
+    def get_batches(self, batchsize, subset = 'train'):
+        if subset == "train":
+            table = self.train_table
+        if subset == "test":
+            table = self.test_table
+        
+        table = table.sample(fraction = 1, shuffle = True)
+        # compute number of batches
+        n_batches = int(np.ceil(len(table) / batchsize))
+        
+        start_idx = 0
+        batchsize = int(batchsize)
+        for batch_idx in range(n_batches):
+            if batch_idx < (n_batches - 1):
+                s = slice(start_idx, start_idx + batchsize, 1)
+                start_idx += batchsize
+            else:
+                s = slice(start_idx, len(table), 1)
+
+            subset_table = table[s]
+            yield subset_table[:, 0].to_list(), torch.from_numpy(subset_table[:, 1:].to_numpy().astype('float32'))
+    
+
+  
+
+# this class is for data loading of the model suggested by the paper
 class FasterDepMapDataset(Dataset):
     def __init__(self,
                  path,
