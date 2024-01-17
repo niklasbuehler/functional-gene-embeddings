@@ -11,13 +11,74 @@ from sklearn.decomposition import PCA
 from torch.utils.data import Dataset, DataLoader, BatchSampler, RandomSampler, random_split
 import anndata
 
-device = torch.device("cpu")
+# dataset loader for the compressed TS data used for the normal VAE
+class TS_Compressed_VAE_Dataset(Dataset): 
+    def __init__(self,
+                 path):
+        self.ds_path = path
+
+        ts_data = sc.read_h5ad(path)
+
+        gene_list = ts_data.var.ensemblid.to_list()
+        gene_list = [i.split(".")[0] for i in gene_list]
+        ts_data.var_names = gene_list
+        ts_data = ts_data.to_df().T
+        ts_data.index.name = "gene_id"
+        ts_data = pl.from_pandas(ts_data, include_index=True)
+
+        #global normalization
+        data = ts_data.melt(id_vars=['gene_id'],
+                    variable_name='cell_line',
+                    value_name='score',
+                    )
+        mean = data.select(pl.mean("score"))[0,0]
+        sd = data.select(pl.std("score"))[0,0]
+        ts_data = ts_data.with_columns((pl.col(ts_data.columns[1:]) - mean)/sd)
+
+        # shuffle and split in train / test 
+        ts_data = ts_data.sample(fraction = 1, shuffle = True)
+        
+        self.dataset = ts_data
+        self.train_table = ts_data[:int(len(ts_data) * 0.9)]
+        self.test_table = ts_data[int(len(ts_data) * 0.9):]
+
+    def genes_in_assay(self):
+        return self.dataset["gene_id"].to_list()
+    
+    def num_celllines_in_assay(self):
+        return len(self.dataset.columns)-1
+    
+    def get_num_batches_per_epoch(self, batchsize, subset='train'):
+        if subset == 'train':
+            return int(np.ceil(len(self.train_table) / batchsize))
+        elif subset == 'test':
+            return int(np.ceil(len(self.test_table) / batchsize))
+        
+    def get_batches(self, batchsize, subset = 'train'):
+        if subset == "train":
+            table = self.train_table
+        if subset == "test":
+            table = self.test_table
+        
+        table = table.sample(fraction = 1, shuffle = True)
+        # compute number of batches
+        n_batches = int(np.ceil(len(table) / batchsize))
+        
+        start_idx = 0
+        batchsize = int(batchsize)
+        for batch_idx in range(n_batches):
+            if batch_idx < (n_batches - 1):
+                s = slice(start_idx, start_idx + batchsize, 1)
+                start_idx += batchsize
+            else:
+                s = slice(start_idx, len(table), 1)
+
+            subset_table = table[s]
+            yield subset_table[:, 0].to_list(), torch.from_numpy(subset_table[:, 1:].to_numpy().astype('float32'))
+    
 
 
-# torch.set_default_device(device)
-
-
-# dataset class for the compressed tabula sapiens dataset
+# dataset class for the compressed tabula sapiens dataset used in the model by the paper
 class TS_Compressed_Dataset(Dataset):
     def __init__(self,
                  gene_index,
