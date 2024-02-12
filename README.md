@@ -24,26 +24,6 @@ You will build upon a functional gene embedding we just published [2].
 
 2: Felix Brechtmann, Thibault Bechtler, Shubhankar Londhe, Christian Mertes, and Julien Gagneur. (2023). Evaluation of input data modality choices on functional gene embeddings. NAR Genomics and Bioinformatics, 2023, PMID: 37942285
  
-## How to run
+## Documentation
 
-Train model with default configuration
-
-```bash
-# train on CPU
-python src/train.py trainer=cpu
-
-# train on GPU
-python src/train.py trainer=gpu
-```
-
-Train model with chosen experiment configuration from [configs/experiment/](configs/experiment/)
-
-```bash
-python src/train.py experiment=experiment_name.yaml
-```
-
-You can override any parameter from command line like this
-
-```bash
-python src/train.py trainer.max_epochs=20 data.batch_size=64
-```
+[Report](functional-gene-embeddings.pdf) and [Slides](functional-gene-embeddings-slides.pdf).
